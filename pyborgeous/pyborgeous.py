@@ -48,7 +48,7 @@ class Page:
 
             magic_number = magic_number * config + int(address_item)
 
-        self.page_text = integer_to_text(magic_number)
+        self.page_text = integer_to_base(magic_number,self.PAGE_ENCODE_STRING)
 
         return self.page_text
 
@@ -85,7 +85,7 @@ class Page:
         elif page_text_length != self.page_configuration.CHARACTERS_PER_PAGE:
             raise NotImplementedError(docstrings.ERROR_PAGE_TO_ADDRESS_UNKNOWN_MODE)
 
-        magic_number = text_to_integer(self.page_text)
+        magic_number = base_to_integer(self.page_text,self.PAGE_ENCODE_STRING)
 
         for value in self.library_configuration:
 
@@ -270,7 +270,6 @@ def main():
     if command_line.output_file:
         storage = DataFile(command_line.output_file, data_to_write)
         storage.save()
-
     print(data_to_write)
 
 
@@ -295,7 +294,6 @@ def integer_to_text(number):
     text = number.to_bytes((number.bit_length() + 7) // 8, byteorder='little')
 
     return text.decode("utf-8")
-
 
 def integer_to_base(number, base_string):
     """
@@ -335,7 +333,8 @@ def is_invalid_input(string_one, string_two):
     """
 
     for character in string_one:
-
+        if character == '\t':
+            break
         if character not in string_two and character != '\t':  # Dealing with address formatting
 
             return True
