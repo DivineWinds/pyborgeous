@@ -19,7 +19,7 @@ class Page:
     PageContainer = namedtuple('PageContainer', 'CHARACTERS_PER_PAGE CHARACTERS_PER_PAGE_TITLE')
     page_configuration = PageContainer(3200, 25)
 
-    def __init__(self, address_encode_string, page_encode_string, page_text, page_address):
+    def __init__(self, address_encode_string, page_encode_string, page_text, page_address,title_text):
         """
         Instantiates the object with encode string,
         and address if there is no page text provided
@@ -28,6 +28,7 @@ class Page:
         self.ADDRESS_ENCODE_STRING = address_encode_string
         self.PAGE_ENCODE_STRING = page_encode_string
         self.page_address = page_address
+        self.title_text = title_text
         self.page_text = page_text
 
     def get_page_text_by_address(self):
@@ -88,6 +89,81 @@ class Page:
         magic_number = base_to_integer(self.page_text,self.PAGE_ENCODE_STRING)
 
         for value in self.library_configuration:
+
+            result_value = magic_number % value
+            address.append(str(result_value))
+            magic_number = - ((magic_number - result_value) // - value)  # Faster than 'from math import ceil'
+
+        # Check if -cm unicode_short is in effect
+        if self.ADDRESS_ENCODE_STRING:
+            address.append(integer_to_base(magic_number, self.ADDRESS_ENCODE_STRING))
+        else:
+            address.append(integer_to_base(magic_number, self.PAGE_ENCODE_STRING))
+
+        self.page_address = '\t'.join(reversed(address))
+
+        return self.page_address
+    
+    def get_title_from_address(self):
+        """
+        Transforms coordinates back to book title (every page in a book has the same title)
+        [Base number, int, int, int] ~> int ~> string
+        """
+
+        # Check if -cm unicode_short is in effect
+        if self.ADDRESS_ENCODE_STRING:
+            address = self.page_address.split('\t')
+            magic_number = base_to_integer(address[0], self.ADDRESS_ENCODE_STRING)
+        else:
+            address = self.page_address.split('\t')
+            magic_number = base_to_integer(address[0], self.PAGE_ENCODE_STRING)
+
+        for config, address_item in zip(list(reversed(self.library_configuration))[:-1], address[1:-1]):
+
+            magic_number = magic_number * config + int(address_item)
+
+        self.title_text = integer_to_base(magic_number%(len(self.PAGE_ENCODE_STRING)**self.page_configuration.CHARACTERS_PER_PAGE_TITLE),self.PAGE_ENCODE_STRING)
+
+        return self.title_text
+
+
+    def search_by_title(self,mode):
+        """
+        Fills the title with spaces or with random characters (depends on the mode),
+        then transforms it to magic_number,
+        then to page coordinates using ceil division
+        string ~> int ~> [Base number, int, int, int]
+        Format of the resulting address is: encoded room\tbookcase\tshelf\tbook\t0
+        """
+
+        address = []
+        space = ' '
+        title_text_length = len(self.title_text)
+
+        # If text is shorter than 25 characters, fill the rest with spaces
+        if title_text_length < self.page_configuration.CHARACTERS_PER_PAGE_TITLE and mode == 'spaces':
+            self.title_text += space * (self.page_configuration.CHARACTERS_PER_PAGE_TITLE - title_text_length)
+
+        # If text is shorter than 25 characters, fill the rest with random characters on both sides
+        elif title_text_length < self.page_configuration.CHARACTERS_PER_PAGE_TITLE and mode == 'random':
+            postfix_range = random.randrange(self.page_configuration.CHARACTERS_PER_PAGE_TITLE - title_text_length - 1)
+            prefix_range = self.page_configuration.CHARACTERS_PER_PAGE_TITLE - title_text_length - postfix_range
+            prefix = ''.join(random.choice(self.PAGE_ENCODE_STRING) for _ in range(prefix_range))
+            postfix = ''.join(random.choice(self.PAGE_ENCODE_STRING) for _ in range(postfix_range))
+            self.title_text = prefix + self.page_text + postfix
+
+        # If text is longer than 25 characters, truncate it
+        elif title_text_length > self.page_configuration.CHARACTERS_PER_PAGE_TITLE:
+            self.title_text = self.title_text[:self.page_configuration.CHARACTERS_PER_PAGE_TITLE + 1]
+
+        # If nothing happened and text is exact 25 characters long, then the mode specified was wrong (which is weird)
+        elif title_text_length != self.page_configuration.CHARACTERS_PER_PAGE_TITLE:
+            raise NotImplementedError(docstrings.ERROR_PAGE_TO_ADDRESS_UNKNOWN_MODE)
+
+        magic_number = base_to_integer(self.title_text,self.PAGE_ENCODE_STRING)
+        # Exclude page as all pages have the same title. Use page 0 so title is visible when page is opened
+        address.append('0')
+        for value in self.library_configuration[1:]:
 
             result_value = magic_number % value
             address.append(str(result_value))
@@ -185,6 +261,12 @@ def main():
                            dest="text_random", help=docstrings.HELP_TEXT_RANDOM)
     arg_input.add_argument("-tf", "--text-file",
                            dest="text_file", help=docstrings.HELP_TEXT_FILE)
+    arg_input.add_argument("-tt", "--title",
+                           dest="title_exact", help=docstrings.HELP_TEXT_EXACT)
+    arg_input.add_argument("-ttr", "--title-random",
+                           dest="title_random", help=docstrings.HELP_TEXT_RANDOM)
+    arg_input.add_argument("-ttf", "--title-file",
+                           dest="title_file", help=docstrings.HELP_TEXT_FILE)
 
     # Now, parse!
     command_line = arg_parser.parse_args()
@@ -230,6 +312,19 @@ def main():
     else:
         page_text = None
 
+    if command_line.title_exact:                                                         # -tt
+       title_text = command_line.title_exact
+
+    elif command_line.title_random:                                                      # -ttr
+        title_text = command_line.title_random
+
+    elif command_line.text_file:                                                        # -ttf
+        text_file_object = DataFile(command_line.title_file)
+        title_text = text_file_object.load()
+
+    else:
+        title_text = None
+
     # Figure out what address to use if any specified according to -a, -af arguments
     if command_line.page_address:                                                       # -pa
         page_address = command_line.page_address
@@ -244,20 +339,27 @@ def main():
     # Validate if page_text exists and consists of characters
     if page_text and is_invalid_input(page_text, page_characters):
         raise NotImplementedError(docstrings.ERROR_TEXT_NOT_IN_CHARSET)
+    
+    # Validate if title_text exists and consists of characters
+    if title_text and is_invalid_input(title_text, page_characters):
+        raise NotImplementedError(docstrings.ERROR_TEXT_NOT_IN_CHARSET)
 
     # Validate if page_address exists and consists of characters
     if page_address and is_invalid_input(page_address, page_characters):
         raise NotImplementedError(docstrings.ERROR_ADDRESS_NOT_IN_CHARSET)
 
     # Instantiate a page, either page_text or page_address should be None
-    current_page = Page(address_characters, page_characters, page_text, page_address)
+    current_page = Page(address_characters, page_characters, page_text, page_address,title_text)
 
     # Getting data out
     data_to_write = 'SOMETHING WENT WRONG'  # Just in case
 
     if page_address:
         current_page.get_page_text_by_address()
-        data_to_write = current_page.page_text
+        data_to_write=""
+        if int(current_page.page_address.split('\t')[-1]) == 0:
+            data_to_write+=current_page.get_title_from_address()+"\n\n"
+        data_to_write += current_page.page_text
 
     elif page_text and (command_line.text_exact or command_line.text_file):
         current_page.get_address_by_page_text('spaces')
@@ -265,6 +367,14 @@ def main():
 
     elif page_text and command_line.text_random:
         current_page.get_address_by_page_text('random')
+        data_to_write = current_page.page_address
+
+    elif title_text and (command_line.title_exact or command_line.title_file):
+        current_page.search_by_title('spaces')
+        data_to_write = current_page.page_address
+
+    elif title_text and command_line.title_random:
+        current_page.search_by_title('random')
         data_to_write = current_page.page_address
 
     if command_line.output_file:
